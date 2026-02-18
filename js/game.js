@@ -212,33 +212,51 @@ function drawHUD() {
 
   // P1 status
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(8, 8, 180, 52);
+  ctx.fillRect(8, 8, 180, 62);
   ctx.fillStyle = '#e8c170';
   ctx.font = '13px monospace';
-  ctx.fillText('P1', 16, 24);
+  ctx.fillText('P1', 16, 22);
   ctx.fillStyle = '#fff';
-  ctx.font = '11px monospace';
-  ctx.fillText(`${invSummary(Player1.inventory)}`, 40, 24);
+  ctx.font = '10px monospace';
+  ctx.fillText(`${invSummary(Player1.inventory)}`, 40, 22);
+  // Gold
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText(`${Player1.gold}g`, 140, 22);
+  if (Player1.hasGoldenRod) {
+    ctx.fillText('\u2605', 170, 22); // star
+  }
   // HP bar
-  drawHUDHealthBar(16, 29, 160, 8, Player1);
+  drawHUDHealthBar(16, 27, 160, 8, Player1);
   ctx.fillStyle = '#aaa';
   ctx.font = '10px monospace';
-  ctx.fillText('WASD:Move F:Act E:Eat', 16, 52);
+  ctx.fillText('WASD:Move F:Act E:Eat', 16, 50);
+  ctx.fillStyle = '#666';
+  ctx.font = '9px monospace';
+  ctx.fillText('Walk into NPCs to interact', 16, 62);
 
   // P2 status
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(SCREEN_W - 188, 8, 180, 52);
+  ctx.fillRect(SCREEN_W - 188, 8, 180, 62);
   ctx.fillStyle = '#70b8e0';
   ctx.font = '13px monospace';
-  ctx.fillText('P2', SCREEN_W - 180, 24);
+  ctx.fillText('P2', SCREEN_W - 180, 22);
   ctx.fillStyle = '#fff';
-  ctx.font = '11px monospace';
-  ctx.fillText(`${invSummary(Player2.inventory)}`, SCREEN_W - 156, 24);
+  ctx.font = '10px monospace';
+  ctx.fillText(`${invSummary(Player2.inventory)}`, SCREEN_W - 156, 22);
+  // Gold
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText(`${Player2.gold}g`, SCREEN_W - 48, 22);
+  if (Player2.hasGoldenRod) {
+    ctx.fillText('\u2605', SCREEN_W - 18, 22); // star
+  }
   // HP bar
-  drawHUDHealthBar(SCREEN_W - 172, 29, 160, 8, Player2);
+  drawHUDHealthBar(SCREEN_W - 172, 27, 160, 8, Player2);
   ctx.fillStyle = '#aaa';
   ctx.font = '10px monospace';
-  ctx.fillText('Arrows:Move /:Act .:Eat', SCREEN_W - 180, 52);
+  ctx.fillText('Arrows:Move /:Act .:Eat', SCREEN_W - 180, 50);
+  ctx.fillStyle = '#666';
+  ctx.font = '9px monospace';
+  ctx.fillText('Walk into NPCs to interact', SCREEN_W - 180, 62);
 
   // Time of day
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -306,6 +324,7 @@ function gameLoop(timestamp) {
 
   Player1.update(dt, Player2);
   Player2.update(dt, Player1);
+  NPCManager.update(dt, [Player1, Player2]);
   updateCamera();
 
   ctx.clearRect(0, 0, SCREEN_W, SCREEN_H);
@@ -316,6 +335,8 @@ function gameLoop(timestamp) {
 
   Player2.draw(ctx, camera);
   drawNameTag(ctx, camera, Player2, 'P2', '#70b8e0');
+
+  NPCManager.draw(ctx, camera);
 
   // Draw roofs over houses where no player is inside
   GameMap.drawRoofs(ctx, camera, [Player1, Player2]);

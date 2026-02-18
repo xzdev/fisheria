@@ -74,6 +74,7 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
     inventory: [],    // { name, cooked } for fish, { name, type:'treasure', heal } for loot
     eatMessage: null,  // { text, timer }
     gold: 0,
+    hasGoldenRod: false,
     hp: 100,
     maxHp: 100,
     hungerTimer: 0,
@@ -150,7 +151,8 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
           this.fishing.timer -= dt;
           if (this.fishing.state === 'casting' && this.fishing.timer <= 0) {
             const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
-            const waitTime = isNight ? (2000 + Math.random() * 2000) : (3000 + Math.random() * 3000);
+            const rodMult = this.hasGoldenRod ? 0.5 : 1;
+            const waitTime = (isNight ? (2000 + Math.random() * 2000) : (3000 + Math.random() * 3000)) * rodMult;
             this.fishing.state = 'waiting';
             this.fishing.timer = waitTime;
           } else if (this.fishing.state === 'waiting' && this.fishing.timer <= 0) {
@@ -174,7 +176,8 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         if (ft.tile === 2) {
           this.fishing = {
             state: 'casting',
-            timer: 500,
+            timer: this.hasGoldenRod ? 250 : 500,
+            castDuration: this.hasGoldenRod ? 250 : 500,
             bobX: ft.col * TILE + TILE / 2,
             bobY: ft.row * TILE + TILE / 2,
             fish: null,
@@ -385,13 +388,13 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         if (this.facing === 'up')    handY = sy + 4;
         if (this.facing === 'down')  handY = sy + 16;
 
-        ctx.strokeStyle = '#8B7355';
+        ctx.strokeStyle = this.hasGoldenRod ? '#ffd700' : '#8B7355';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(handX, handY);
 
         if (this.fishing.state === 'casting') {
-          const progress = 1 - (this.fishing.timer / 500);
+          const progress = 1 - (this.fishing.timer / (this.fishing.castDuration || 500));
           const lineEndX = handX + (bobSX - handX) * progress;
           const lineEndY = handY + (bobSY - handY) * progress;
           ctx.lineTo(lineEndX, lineEndY);
