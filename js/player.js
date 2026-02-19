@@ -1,3 +1,11 @@
+const FISHING_RODS = [
+  { name: 'Wooden Rod',   color: '#8B7355', speedMult: 1.0,  castTime: 500, rareMult: 1.0, cost: 0   },
+  { name: 'Iron Rod',     color: '#8888aa', speedMult: 0.8,  castTime: 400, rareMult: 1.2, cost: 50  },
+  { name: 'Steel Rod',    color: '#aabbcc', speedMult: 0.65, castTime: 350, rareMult: 1.5, cost: 150 },
+  { name: 'Silver Rod',   color: '#c0c0d0', speedMult: 0.5,  castTime: 300, rareMult: 2.0, cost: 400 },
+  { name: 'Golden Rod',   color: '#ffd700', speedMult: 0.35, castTime: 250, rareMult: 3.0, cost: 1000},
+];
+
 const FISH_TYPES = [
   { name: 'Bluegill',       weight: 40 },
   { name: 'Bass',           weight: 25 },
@@ -6,6 +14,23 @@ const FISH_TYPES = [
   { name: 'Catfish',        weight: 5  },
   { name: 'Old Boot',       weight: 4  },
   { name: 'Treasure Chest', weight: 1  },
+];
+
+// Rare fish — only catchable with matching bait equipped
+const RARE_FISH = [
+  { name: 'Sturgeon',       weight: 8, bait: 1 },
+  { name: 'Swordfish',      weight: 5, bait: 2 },
+  { name: 'Anglerfish',     weight: 4, bait: 3 },
+  { name: 'Legendary Koi',  weight: 2, bait: 4 },
+];
+
+// Bait types — index 0 is "no bait"
+const BAIT_TYPES = [
+  { name: 'No Bait',      color: '#666',    cost: 0,   amount: 0 },
+  { name: 'Worm',          color: '#8B5E3C', cost: 10,  amount: 5 },
+  { name: 'Shrimp',        color: '#E8A090', cost: 30,  amount: 5 },
+  { name: 'Glowworm',      color: '#80FF80', cost: 75,  amount: 5 },
+  { name: 'Golden Lure',   color: '#FFD700', cost: 200, amount: 3 },
 ];
 
 const TREASURE_LOOT = [
@@ -28,20 +53,42 @@ function pickTreasure() {
   return TREASURE_LOOT[0];
 }
 
-function pickFish(isNight) {
-  const weights = FISH_TYPES.map((f, i) => {
-    if (isNight) {
-      return i < 2 ? f.weight * 0.5 : f.weight * 2;
+function pickFish(isNight, rareMult, baitType) {
+  rareMult = rareMult || 1;
+  baitType = baitType || 0;
+
+  // Build combined pool: normal fish + rare fish if bait matches
+  const pool = [];
+  const weights = [];
+
+  for (let i = 0; i < FISH_TYPES.length; i++) {
+    const f = FISH_TYPES[i];
+    let w = f.weight;
+    if (isNight) w = i < 2 ? w * 0.5 : w * 2;
+    if (i >= 3 && rareMult > 1) w *= rareMult;
+    pool.push(f.name);
+    weights.push(w);
+  }
+
+  // Add rare fish if bait is equipped
+  if (baitType > 0) {
+    for (const rf of RARE_FISH) {
+      if (rf.bait === baitType) {
+        let w = rf.weight * rareMult;
+        if (isNight && rf.bait === 3) w *= 3; // Glowworm bait bonus at night
+        pool.push(rf.name);
+        weights.push(w);
+      }
     }
-    return f.weight;
-  });
+  }
+
   const total = weights.reduce((a, b) => a + b, 0);
   let r = Math.random() * total;
   for (let i = 0; i < weights.length; i++) {
     r -= weights[i];
-    if (r <= 0) return FISH_TYPES[i].name;
+    if (r <= 0) return pool[i];
   }
-  return FISH_TYPES[0].name;
+  return pool[0];
 }
 
 function getFacingTile(player) {
@@ -55,7 +102,7 @@ function getFacingTile(player) {
   return { col: tx, row: ty, tile: GameMap.getTile(tx, ty) };
 }
 
-function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKey) {
+function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKey, baitKey) {
   return {
     x: startCol * TILE,
     y: startRow * TILE,
@@ -70,24 +117,35 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
     getDirection,
     actionKey,
     eatKey,
+    baitKey,
     fishing: null,
     inventory: [],    // { name, cooked } for fish, { name, type:'treasure', heal } for loot
     eatMessage: null,  // { text, timer }
     gold: 0,
-    hasGoldenRod: false,
+    rodTier: 0,  // index into FISHING_RODS
     hp: 100,
     maxHp: 100,
+    hunger: 0,       // 0 = full, 100 = starving
+    maxHunger: 100,
     hungerTimer: 0,
+    baitType: 0,           // index into BAIT_TYPES (0 = no bait)
+    baitCounts: [0, 0, 0, 0, 0], // count of each bait type owned
 
     update(dt, otherPlayer) {
       const dir = this.getDirection();
       const wantsMove = dir.dx !== 0 || dir.dy !== 0;
 
-      // Passive hunger drain — lose 1 HP every 15 seconds
+      // Hunger increases over time — +1 every 10 seconds
       this.hungerTimer += dt;
-      if (this.hungerTimer >= 15000) {
-        this.hungerTimer -= 15000;
-        if (this.hp > 1) this.hp -= 1;
+      if (this.hungerTimer >= 10000) {
+        this.hungerTimer -= 10000;
+        if (this.hunger < this.maxHunger) {
+          this.hunger = Math.min(this.maxHunger, this.hunger + 2);
+        }
+        // Starving — lose HP when hunger is maxed
+        if (this.hunger >= this.maxHunger && this.hp > 1) {
+          this.hp -= 2;
+        }
       }
 
       // Eat message timer
@@ -115,18 +173,20 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
           if (eatIdx !== -1) {
             const item = this.inventory.splice(eatIdx, 1)[0];
             if (item.type === 'treasure') {
+              // Potions heal HP
               const oldHp = this.hp;
               this.hp = Math.min(this.maxHp, this.hp + item.heal);
               this.eatMessage = { text: `Used ${item.name}! +${this.hp - oldHp}HP`, timer: 2000 };
             } else {
-              const heal = item.cooked ? 30 : 10;
-              const oldHp = this.hp;
-              this.hp = Math.min(this.maxHp, this.hp + heal);
-              const healed = this.hp - oldHp;
+              // Fish reduces hunger
+              const feed = item.cooked ? 30 : 10;
+              const oldHunger = this.hunger;
+              this.hunger = Math.max(0, this.hunger - feed);
+              const fed = oldHunger - this.hunger;
               if (item.cooked) {
-                this.eatMessage = { text: `Ate Cooked ${item.name}! +${healed}HP`, timer: 2000 };
+                this.eatMessage = { text: `Ate Cooked ${item.name}! -${fed} Hunger`, timer: 2000 };
               } else {
-                this.eatMessage = { text: `Ate Raw ${item.name}... +${healed}HP`, timer: 2000 };
+                this.eatMessage = { text: `Ate Raw ${item.name}... -${fed} Hunger`, timer: 2000 };
               }
             }
           } else {
@@ -143,6 +203,18 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         }
       }
 
+      // Bait cycling with bait key
+      if (Input.justPressed(this.baitKey)) {
+        let next = (this.baitType + 1) % BAIT_TYPES.length;
+        while (next !== 0 && this.baitCounts[next] <= 0) {
+          next = (next + 1) % BAIT_TYPES.length;
+        }
+        this.baitType = next;
+        const name = BAIT_TYPES[this.baitType].name;
+        const count = this.baitType > 0 ? ` (${this.baitCounts[this.baitType]} left)` : '';
+        this.eatMessage = { text: `Bait: ${name}${count}`, timer: 1500 };
+      }
+
       // Fishing logic
       if (this.fishing) {
         if (wantsMove) {
@@ -151,17 +223,24 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
           this.fishing.timer -= dt;
           if (this.fishing.state === 'casting' && this.fishing.timer <= 0) {
             const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
-            const rodMult = this.hasGoldenRod ? 0.5 : 1;
-            const waitTime = (isNight ? (2000 + Math.random() * 2000) : (3000 + Math.random() * 3000)) * rodMult;
+            const rod = FISHING_RODS[this.rodTier];
+            const waitTime = (isNight ? (2000 + Math.random() * 2000) : (3000 + Math.random() * 3000)) * rod.speedMult;
             this.fishing.state = 'waiting';
             this.fishing.timer = waitTime;
           } else if (this.fishing.state === 'waiting' && this.fishing.timer <= 0) {
             const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+            const activeBait = (this.baitType > 0 && this.baitCounts[this.baitType] > 0) ? this.baitType : 0;
             this.fishing.state = 'caught';
-            this.fishing.fish = pickFish(isNight);
+            this.fishing.fish = pickFish(isNight, FISHING_RODS[this.rodTier].rareMult, activeBait);
+            this.fishing.usedBait = activeBait;
           } else if (this.fishing.state === 'caught' && Input.justPressed(this.actionKey)) {
             this.inventory.push({ name: this.fishing.fish, cooked: false });
             recordCatch(this.fishing.fish);
+            // Consume bait
+            if (this.fishing.usedBait > 0) {
+              this.baitCounts[this.fishing.usedBait]--;
+              if (this.baitCounts[this.baitType] <= 0) this.baitType = 0;
+            }
             this.fishing = null;
           }
         }
@@ -176,8 +255,8 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         if (ft.tile === 2) {
           this.fishing = {
             state: 'casting',
-            timer: this.hasGoldenRod ? 250 : 500,
-            castDuration: this.hasGoldenRod ? 250 : 500,
+            timer: FISHING_RODS[this.rodTier].castTime,
+            castDuration: FISHING_RODS[this.rodTier].castTime,
             bobX: ft.col * TILE + TILE / 2,
             bobY: ft.row * TILE + TILE / 2,
             fish: null,
@@ -230,6 +309,22 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
               fridgeMessage.text = `Nothing to throw away!`;
               fridgeMessage.timer = 1500;
             }
+          }
+          return;
+        }
+        // Shop — open rod shop
+        if (ft.tile === 13) {
+          if (typeof shopState !== 'undefined') {
+            shopState.open = true;
+            shopState.player = this;
+          }
+          return;
+        }
+        // Bait shop — open bait shop
+        if (ft.tile === 14) {
+          if (typeof baitShopState !== 'undefined') {
+            baitShopState.open = true;
+            baitShopState.player = this;
           }
           return;
         }
@@ -351,19 +446,28 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
       const barW = 24;
       const barH = 3;
       const barX = sx + (this.w - barW) / 2;
-      const barY = sy - 4;
-      // Background
+      const barY = sy - 7;
       ctx.fillStyle = '#333';
       ctx.fillRect(barX, barY, barW, barH);
-      // Health fill
       const hpRatio = this.hp / this.maxHp;
       const hpColor = hpRatio > 0.5 ? '#4c4' : hpRatio > 0.25 ? '#cc4' : '#c44';
       ctx.fillStyle = hpColor;
       ctx.fillRect(barX, barY, barW * hpRatio, barH);
-      // Border
       ctx.strokeStyle = '#000';
       ctx.lineWidth = 0.5;
       ctx.strokeRect(barX, barY, barW, barH);
+
+      // Hunger bar below HP bar
+      const hunBarY = barY + barH + 1;
+      ctx.fillStyle = '#333';
+      ctx.fillRect(barX, hunBarY, barW, barH);
+      const hungerRatio = 1 - (this.hunger / this.maxHunger); // full=green, empty=red
+      const hunColor = hungerRatio > 0.5 ? '#c90' : hungerRatio > 0.25 ? '#c60' : '#c30';
+      ctx.fillStyle = hunColor;
+      ctx.fillRect(barX, hunBarY, barW * hungerRatio, barH);
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(barX, hunBarY, barW, barH);
 
       // Eat message above head
       if (this.eatMessage) {
@@ -388,7 +492,7 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         if (this.facing === 'up')    handY = sy + 4;
         if (this.facing === 'down')  handY = sy + 16;
 
-        ctx.strokeStyle = this.hasGoldenRod ? '#ffd700' : '#8B7355';
+        ctx.strokeStyle = FISHING_RODS[this.rodTier].color;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(handX, handY);
@@ -439,7 +543,7 @@ const Player1 = createPlayer(20 + 4, 15 + 6, {
   head: '#f5d6a8',
   hair: '#5a3a1a',
   legs: '#4a6fa5',
-}, () => Input.getDirectionWASD(), 'KeyF', 'KeyE');
+}, () => Input.getDirectionWASD(), 'KeyF', 'KeyE', 'KeyQ');
 
 // Player 2: Arrows - cool colors
 const Player2 = createPlayer(20 + 16, 15 + 8, {
@@ -447,4 +551,4 @@ const Player2 = createPlayer(20 + 16, 15 + 8, {
   head: '#c8e0f0',
   hair: '#2a4a6a',
   legs: '#a05a4a',
-}, () => Input.getDirectionArrows(), 'Slash', 'Period');
+}, () => Input.getDirectionArrows(), 'Slash', 'Period', 'Comma');

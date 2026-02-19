@@ -1,75 +1,59 @@
-// NPC encounter types with weighted random outcomes
+// Random appearance pool — all NPCs draw from this so thieves look like anyone else
+const NPC_BODIES  = ['#8B7355','#6a8a5a','#9060a0','#c0a020','#b05050','#5080a0','#80a060','#a07050','#606080','#508060'];
+const NPC_HEADS   = ['#d4a878','#e0c8a0','#f0d0b0','#f0e0c0','#c8b090','#e8d0a8','#d0b898','#f0c8b0','#e0b890','#d8c0a0'];
+const NPC_HAIRS   = ['#aaa','#4a3020','#e0c030','#202020','#8a4020','#3a2010','#c08030','#666','#2a2a2a','#b06020'];
+const NPC_LEGS    = ['#555','#7a6a50','#404060','#303030','#5a4a40','#4a5a6a','#6a5a40','#444','#505050','#5a5050'];
+
+function randomColors() {
+  return {
+    body: NPC_BODIES[Math.floor(Math.random() * NPC_BODIES.length)],
+    head: NPC_HEADS[Math.floor(Math.random() * NPC_HEADS.length)],
+    hair: NPC_HAIRS[Math.floor(Math.random() * NPC_HAIRS.length)],
+    legs: NPC_LEGS[Math.floor(Math.random() * NPC_LEGS.length)],
+  };
+}
+
+// Display names — thieves get normal-sounding names to blend in
+const FRIENDLY_NAMES = ['Old Fisherman','Hungry Traveler','Fish Collector','Wanderer','Villager','Farmer','Tourist','Angler','Hiker','Chef'];
+const THIEF_NAMES    = ['Traveler','Stranger','Wanderer','Villager','Passerby','Tourist','Drifter','Newcomer'];
+
+// NPC encounter types
 const NPC_TYPES = [
   // Friendly NPCs — give rewards for fish
   {
-    name: 'Old Fisherman',
-    colors: { body: '#8B7355', head: '#d4a878', hair: '#aaa', legs: '#555' },
     friendly: true, weight: 25,
     dialogue: [
       "Howdy! Got any fish?",
       "I'll trade ya for that fish!",
       "Nice catch! Here's something for ya.",
-    ],
-  },
-  {
-    name: 'Hungry Traveler',
-    colors: { body: '#6a8a5a', head: '#e0c8a0', hair: '#4a3020', legs: '#7a6a50' },
-    friendly: true, weight: 20,
-    dialogue: [
       "I'm so hungry... got a fish?",
       "Please, any fish will do!",
       "You're a lifesaver!",
-    ],
-  },
-  {
-    name: 'Fish Collector',
-    colors: { body: '#9060a0', head: '#f0d0b0', hair: '#e0c030', legs: '#404060' },
-    friendly: true, weight: 15,
-    dialogue: [
       "I collect rare fish!",
       "Ooh, what do you have?",
       "Let me see your catch!",
     ],
   },
   {
-    name: 'Mysterious Merchant',
-    colors: { body: '#c0a020', head: '#f0e0c0', hair: '#202020', legs: '#303030' },
     friendly: true, weight: 5, bigReward: true,
     dialogue: [
       "I sense great fortune...",
       "The fish gods smile upon you!",
       "A rare trade, just for you...",
+      "Destiny brought us together...",
     ],
   },
-  // Thieves — steal fish
+  // Thieves — steal fish (look identical to friendly NPCs)
   {
-    name: 'Sneaky Cat',
-    colors: { body: '#888', head: '#999', hair: '#666', legs: '#777' },
-    friendly: false, weight: 15,
+    friendly: false, weight: 18,
     dialogue: [
-      "Meow! *snatches fish*",
-      "Hiss! Mine now!",
-      "*steals your fish and runs*",
-    ],
-  },
-  {
-    name: 'Bandit',
-    colors: { body: '#333', head: '#c0a080', hair: '#222', legs: '#444' },
-    friendly: false, weight: 12,
-    dialogue: [
-      "Hand over the fish!",
-      "Your fish or your life!",
-      "Yoink! Thanks, sucker!",
-    ],
-  },
-  {
-    name: 'Raccoon',
-    colors: { body: '#605040', head: '#706050', hair: '#333', legs: '#504030' },
-    friendly: false, weight: 8,
-    dialogue: [
-      "*rummages through your bag*",
-      "Chitter chitter! *steals*",
-      "*grabs fish and waddles away*",
+      "Ha! Gotcha!",
+      "Thanks for the fish, sucker!",
+      "Yoink! Too slow!",
+      "*snatches your bag*",
+      "Hand it over! ...too late!",
+      "A gift? For me? Don't mind if I do!",
+      "Heh, easier than fishing!",
     ],
   },
 ];
@@ -136,12 +120,15 @@ function createNpc() {
   if (!spot) return null;
 
   const type = pickNpcType();
+  const namePool = type.friendly ? FRIENDLY_NAMES : THIEF_NAMES;
   return {
     x: spot.col * TILE,
     y: spot.row * TILE,
     w: 24,
     h: 24,
     type,
+    name: namePool[Math.floor(Math.random() * namePool.length)],
+    colors: randomColors(),
     triggered: false,
     result: null,     // { text, timer, color }
     fadeOut: 0,       // fade after interaction
@@ -153,8 +140,8 @@ function createNpc() {
 const NPCManager = {
   npcs: [],
   spawnTimer: 0,
-  spawnInterval: 15000, // Try spawning every 15 seconds
-  maxNpcs: 3,
+  spawnInterval: 8000, // Try spawning every 8 seconds
+  maxNpcs: 6,
 
   update(dt, players) {
     // Spawn timer
@@ -225,12 +212,13 @@ const NPCManager = {
           player.inventory.push({ name: reward.name, cooked: false });
           rewardText = reward.text;
         } else if (reward.type === 'goldenRod') {
-          player.hasGoldenRod = true;
+          // Upgrade to max rod tier
+          player.rodTier = FISHING_RODS.length - 1;
           rewardText = reward.text;
         }
 
         npc.result = {
-          line1: `${type.name}: "${dialogue}"`,
+          line1: `${npc.name}: "${dialogue}"`,
           line2: `Took your ${fish.cooked ? 'Cooked ' : ''}${fish.name}`,
           line3: rewardText,
           timer: 3500,
@@ -239,7 +227,7 @@ const NPCManager = {
       } else {
         // No fish to give
         npc.result = {
-          line1: `${type.name}: "Got any fish?"`,
+          line1: `${npc.name}: "Got any fish?"`,
           line2: 'You have no fish to trade...',
           line3: '*walks away disappointed*',
           timer: 2500,
@@ -264,7 +252,7 @@ const NPCManager = {
         }
 
         npc.result = {
-          line1: `${type.name}: "${dialogue}"`,
+          line1: `${npc.name}: "${dialogue}"`,
           line2: `Stole ${stolen.length} fish from you!`,
           line3: stolen.map(f => f.name).join(', '),
           timer: 3000,
@@ -273,7 +261,7 @@ const NPCManager = {
       } else {
         // Nothing to steal
         npc.result = {
-          line1: `${type.name}: "${dialogue}"`,
+          line1: `${npc.name}: "${dialogue}"`,
           line2: `...but you have nothing to steal!`,
           line3: '*leaves empty-handed*',
           timer: 2500,
@@ -298,15 +286,15 @@ const NPCManager = {
       const bob = Math.sin(npc.bobTimer / 400) * 1.5;
 
       // Body
-      ctx.fillStyle = npc.type.colors.body;
+      ctx.fillStyle = npc.colors.body;
       ctx.fillRect(sx + 4, sy + 6 + bob, 16, 14);
 
       // Head
-      ctx.fillStyle = npc.type.colors.head;
+      ctx.fillStyle = npc.colors.head;
       ctx.fillRect(sx + 6, sy + bob, 12, 10);
 
       // Hair
-      ctx.fillStyle = npc.type.colors.hair;
+      ctx.fillStyle = npc.colors.hair;
       ctx.fillRect(sx + 5, sy - 1 + bob, 14, 5);
 
       // Eyes (always facing down)
@@ -315,14 +303,14 @@ const NPCManager = {
       ctx.fillRect(sx + 14, sy + 4 + bob, 2, 2);
 
       // Legs
-      ctx.fillStyle = npc.type.colors.legs;
+      ctx.fillStyle = npc.colors.legs;
       ctx.fillRect(sx + 6, sy + 20 + bob, 5, 4);
       ctx.fillRect(sx + 13, sy + 20 + bob, 5, 4);
 
       // "?" above head if not yet triggered
       if (npc.exclamation && !npc.triggered) {
         const bounce = Math.sin(npc.bobTimer / 250) * 3;
-        ctx.fillStyle = npc.type.friendly ? '#4c4' : '#e44';
+        ctx.fillStyle = '#fff';
         ctx.font = 'bold 14px monospace';
         ctx.textAlign = 'center';
         ctx.fillText('?', sx + npc.w / 2, sy - 8 + bounce);
