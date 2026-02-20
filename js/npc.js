@@ -200,9 +200,13 @@ const NPCManager = {
         const rewardPool = type.bigReward ? NPC_BIG_REWARDS : NPC_REWARDS;
         const reward = pickWeighted(rewardPool);
 
+        achieveProgress.npcTrades++;
+        player.stats.npcTrades++;
         let rewardText = '';
         if (reward.type === 'gold') {
           player.gold += reward.amount;
+          achieveProgress.goldEarned += reward.amount;
+          player.stats.goldEarned += reward.amount;
           rewardText = reward.text.replace('{n}', reward.amount);
         } else if (reward.type === 'heal') {
           const oldHp = player.hp;

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(open:*)",
+      "Bash(git init:*)",
+      "Bash(git -C /Users/terryzhang/game add index.html js/input.js js/map.js js/player.js js/game.js)",
+      "Bash(git -C:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git restore:*)",
+      "Bash(start index.html)"
+    ]
+  }
+}

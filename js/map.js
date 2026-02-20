@@ -1,6 +1,6 @@
 const TILE = 32;
 
-// Tile types: 0=grass, 1=wall, 2=water, 3=path, 4=tree, 5=house_wall, 6=door, 7=house_floor, 8=furniture, 9=bed, 10=fridge, 11=furnace, 12=trashcan, 13=shop, 14=baitshop
+// Tile types: 0=grass, 1=wall, 2=water, 3=path, 4=tree, 5=house_wall, 6=door, 7=house_floor, 8=furniture, 9=bed, 10=fridge, 11=furnace, 12=trashcan, 13=shop, 14=baitshop, 15=netshop, 16=sellstand
 const TILE_COLORS = {
   0: '#4a7c3f', // grass
   1: '#6b6b6b', // wall
@@ -17,9 +17,11 @@ const TILE_COLORS = {
   12: '#4a7c3f', // trashcan (grass base, drawn over)
   13: '#4a7c3f', // shop counter (grass base, drawn over)
   14: '#4a7c3f', // bait shop counter (grass base, drawn over)
+  15: '#4a7c3f', // net shop counter (grass base, drawn over)
+  16: '#4a7c3f', // sell stand counter (grass base, drawn over)
 };
 
-const SOLID_TILES = new Set([1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14]);
+const SOLID_TILES = new Set([1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
 const CHUNK_COLS = 20;
 const CHUNK_ROWS = 15;
@@ -137,10 +139,10 @@ const CHUNK_LAKE = { data: [
   [4,0,0,5,13,5,0,0,0,4,2,2,2,2,2,4,4,0,0,4],
   [4,0,0,0,3,0,0,0,4,2,2,2,2,2,2,2,4,0,0,4],
   [4,0,0,0,0,0,0,4,2,2,2,2,2,2,2,2,2,0,0,4],
-  [4,0,0,0,0,0,0,4,2,2,2,2,2,2,2,2,0,0,0,4],
-  [4,0,0,0,0,0,0,0,4,2,2,2,2,2,2,4,0,0,0,4],
-  [4,0,0,0,0,0,0,0,0,4,2,2,2,2,4,0,0,0,0,4],
-  [0,0,0,0,0,0,0,0,0,0,4,2,2,4,0,0,0,0,0,4],
+  [4,0,0,0,0,0,0,4,2,2,2,2,2,2,2,2,5,5,5,4],
+  [4,0,0,0,0,0,0,0,4,2,2,2,2,2,2,4,5,15,5,4],
+  [4,5,5,5,0,0,0,0,0,4,2,2,2,2,4,0,0,0,0,4],
+  [0,5,16,5,0,0,0,0,0,0,4,2,2,4,0,0,0,0,0,4],
   [3,3,3,3,3,3,3,0,3,0,0,0,0,0,0,0,0,0,0,4],
   [0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4],
   [4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4],
@@ -439,6 +441,75 @@ const GameMap = {
           ctx.fillStyle = '#E8A090';
           ctx.beginPath();
           ctx.arc(x + 20, y + 17, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Net shop counter detail
+        if (tile === 15) {
+          // Counter body
+          ctx.fillStyle = '#3e5e4e';
+          ctx.fillRect(x + 2, y + 6, 28, 22);
+          // Counter top
+          ctx.fillStyle = '#5a8a6a';
+          ctx.fillRect(x + 1, y + 4, 30, 6);
+          // Sign board
+          ctx.fillStyle = '#2a7a5a';
+          ctx.fillRect(x + 4, y - 2, 24, 8);
+          ctx.fillStyle = '#a0f0c0';
+          ctx.font = 'bold 7px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('NETS', x + TILE / 2, y + 4);
+          ctx.textAlign = 'left';
+          // Net grid icon on counter
+          ctx.strokeStyle = '#80c890';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x + 8, y + 12); ctx.lineTo(x + 24, y + 12);
+          ctx.moveTo(x + 8, y + 18); ctx.lineTo(x + 24, y + 18);
+          ctx.moveTo(x + 8, y + 24); ctx.lineTo(x + 24, y + 24);
+          ctx.moveTo(x + 8, y + 12); ctx.lineTo(x + 8, y + 24);
+          ctx.moveTo(x + 16, y + 12); ctx.lineTo(x + 16, y + 24);
+          ctx.moveTo(x + 24, y + 12); ctx.lineTo(x + 24, y + 24);
+          ctx.stroke();
+        }
+
+        // Sell stand counter detail
+        if (tile === 16) {
+          // Counter body
+          ctx.fillStyle = '#5e3e1e';
+          ctx.fillRect(x + 2, y + 6, 28, 22);
+          // Counter top (gold-tinted)
+          ctx.fillStyle = '#c0880a';
+          ctx.fillRect(x + 1, y + 4, 30, 6);
+          // Sign board
+          ctx.fillStyle = '#c07010';
+          ctx.fillRect(x + 4, y - 2, 24, 8);
+          ctx.fillStyle = '#fff8c0';
+          ctx.font = 'bold 7px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('SELL', x + TILE / 2, y + 4);
+          ctx.textAlign = 'left';
+          // Coin stack icon on counter
+          ctx.fillStyle = '#f0d020';
+          ctx.beginPath();
+          ctx.ellipse(x + 13, y + 17, 5, 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#e0c010';
+          ctx.fillRect(x + 8, y + 14, 10, 4);
+          ctx.fillStyle = '#f0d020';
+          ctx.beginPath();
+          ctx.ellipse(x + 13, y + 14, 5, 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          // Second coin stack
+          ctx.fillStyle = '#f0d020';
+          ctx.beginPath();
+          ctx.ellipse(x + 22, y + 18, 4, 2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#e0c010';
+          ctx.fillRect(x + 18, y + 15, 8, 4);
+          ctx.fillStyle = '#f0d020';
+          ctx.beginPath();
+          ctx.ellipse(x + 22, y + 15, 4, 2, 0, 0, Math.PI * 2);
           ctx.fill();
         }
 

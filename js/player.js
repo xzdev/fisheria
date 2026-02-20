@@ -24,6 +24,14 @@ const RARE_FISH = [
   { name: 'Legendary Koi',  weight: 2, bait: 4 },
 ];
 
+// Mini-game difficulty per rare fish — zoneW is fraction of bar width, speed is bar-widths/sec
+const RARE_MINI_GAME = {
+  'Sturgeon':      { zoneW: 0.38, speed: 0.45 },
+  'Swordfish':     { zoneW: 0.28, speed: 0.62 },
+  'Anglerfish':    { zoneW: 0.22, speed: 0.80 },
+  'Legendary Koi': { zoneW: 0.14, speed: 1.05 },
+};
+
 // Bait types — index 0 is "no bait"
 const BAIT_TYPES = [
   { name: 'No Bait',      color: '#666',    cost: 0,   amount: 0 },
@@ -33,14 +41,48 @@ const BAIT_TYPES = [
   { name: 'Golden Lure',   color: '#FFD700', cost: 200, amount: 3 },
 ];
 
+// Net tiers — purchased at the net shop
+const NET_TYPES = [
+  { name: 'Basic Net',    color: '#a0c890', speedMult: 1.0,  rareMult: 1.0, cost: 60  },
+  { name: 'Crab Net',     color: '#60a870', speedMult: 0.75, rareMult: 1.5, cost: 150 },
+  { name: 'Lobster Trap', color: '#3a8850', speedMult: 0.5,  rareMult: 2.2, cost: 350 },
+  { name: 'Deep Trap',    color: '#1a6030', speedMult: 0.35, rareMult: 3.5, cost: 800 },
+];
+
+// Shared achievement progress — read by game.js (loaded after player.js)
+const achieveProgress = {
+  fishCaught: 0,
+  crustaceansCaught: 0,
+  bootsCaught: 0,
+  rareCaught: 0,
+  nightCaught: 0,
+  cooked: 0,
+  eaten: 0,
+  goldEarned: 0,
+  sleeps: 0,
+  npcTrades: 0,
+  legendaryKoi: false,
+};
+
+// Crustaceans — caught with nets in water
+const CRUSTACEAN_TYPES = [
+  { name: 'Shrimp',         weight: 40 },
+  { name: 'Crayfish',       weight: 25 },
+  { name: 'Blue Crab',      weight: 15 },
+  { name: 'Dungeness Crab', weight: 10 },
+  { name: 'Lobster',        weight: 6  },
+  { name: 'King Crab',      weight: 3  },
+  { name: 'Giant Squid',    weight: 1  },
+];
+
 const TREASURE_LOOT = [
-  { name: 'Golden Fish',    weight: 10, heal: 50 },
-  { name: 'Pearl',          weight: 20, heal: 0  },
-  { name: 'Ruby',           weight: 15, heal: 0  },
-  { name: 'Ancient Coin',   weight: 25, heal: 0  },
-  { name: 'Magic Potion',   weight: 15, heal: 80 },
-  { name: 'Diamond',        weight: 5,  heal: 0  },
-  { name: 'Crown',          weight: 2,  heal: 0  },
+  { name: 'Golden Fish',    weight: 10, heal: 50, sell: 80  },
+  { name: 'Pearl',          weight: 20, heal: 0,  sell: 50  },
+  { name: 'Ruby',           weight: 15, heal: 0,  sell: 70  },
+  { name: 'Ancient Coin',   weight: 25, heal: 0,  sell: 40  },
+  { name: 'Magic Potion',   weight: 15, heal: 80, sell: 35  },
+  { name: 'Diamond',        weight: 5,  heal: 0,  sell: 150 },
+  { name: 'Crown',          weight: 2,  heal: 0,  sell: 250 },
 ];
 
 function pickTreasure() {
@@ -91,6 +133,18 @@ function pickFish(isNight, rareMult, baitType) {
   return pool[0];
 }
 
+function pickCrustacean(rareMult) {
+  rareMult = rareMult || 1;
+  const weights = CRUSTACEAN_TYPES.map((c, i) => i >= 3 ? c.weight * rareMult : c.weight);
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < weights.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return CRUSTACEAN_TYPES[i].name;
+  }
+  return CRUSTACEAN_TYPES[0].name;
+}
+
 function getFacingTile(player) {
   const cx = Math.floor((player.x + player.w / 2) / TILE);
   const cy = Math.floor((player.y + player.h / 2) / TILE);
@@ -102,7 +156,7 @@ function getFacingTile(player) {
   return { col: tx, row: ty, tile: GameMap.getTile(tx, ty) };
 }
 
-function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKey, baitKey) {
+function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKey, baitKey, netKey) {
   return {
     x: startCol * TILE,
     y: startRow * TILE,
@@ -130,6 +184,18 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
     hungerTimer: 0,
     baitType: 0,           // index into BAIT_TYPES (0 = no bait)
     baitCounts: [0, 0, 0, 0, 0], // count of each bait type owned
+    netTier: -1,           // -1 = no net, 0+ = net tier owned
+    netting: null,         // active netting state
+    netKey,
+    inBed: false,          // waiting for the other player to sleep
+    stats: {               // per-player statistics for leaderboard
+      fishCaught: 0,
+      crustaceansCaught: 0,
+      goldEarned: 0,
+      npcTrades: 0,
+      cooked: 0,
+      eaten: 0,
+    },
 
     update(dt, otherPlayer) {
       const dir = this.getDirection();
@@ -152,6 +218,20 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
       if (this.eatMessage) {
         this.eatMessage.timer -= dt;
         if (this.eatMessage.timer <= 0) this.eatMessage = null;
+      }
+
+      // In bed — frozen, waiting for the other player
+      if (this.inBed) {
+        if (Input.justPressed(this.eatKey)) {
+          this.inBed = false;
+          if (typeof sleepReady !== 'undefined') {
+            if (this === Player1) sleepReady.p1 = false;
+            else sleepReady.p2 = false;
+          }
+          this.eatMessage = { text: 'Got out of bed.', timer: 1500 };
+        }
+        this.moving = false;
+        return;
       }
 
       // Eat key — eat fish or use healing treasure (prefers cooked fish, then healing potions, then raw)
@@ -184,6 +264,8 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
               this.hunger = Math.max(0, this.hunger - feed);
               const fed = oldHunger - this.hunger;
               if (item.cooked) {
+                achieveProgress.eaten++;
+                this.stats.eaten++;
                 this.eatMessage = { text: `Ate Cooked ${item.name}! -${fed} Hunger`, timer: 2000 };
               } else {
                 this.eatMessage = { text: `Ate Raw ${item.name}... -${fed} Hunger`, timer: 2000 };
@@ -217,7 +299,7 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
 
       // Fishing logic
       if (this.fishing) {
-        if (wantsMove) {
+        if (wantsMove && this.fishing.state !== 'minigame') {
           this.fishing = null;
         } else {
           this.fishing.timer -= dt;
@@ -234,14 +316,89 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
             this.fishing.fish = pickFish(isNight, FISHING_RODS[this.rodTier].rareMult, activeBait);
             this.fishing.usedBait = activeBait;
           } else if (this.fishing.state === 'caught' && Input.justPressed(this.actionKey)) {
-            this.inventory.push({ name: this.fishing.fish, cooked: false });
-            recordCatch(this.fishing.fish);
-            // Consume bait
-            if (this.fishing.usedBait > 0) {
-              this.baitCounts[this.fishing.usedBait]--;
-              if (this.baitCounts[this.baitType] <= 0) this.baitType = 0;
+            const isRare = RARE_FISH.some(r => r.name === this.fishing.fish);
+            if (isRare) {
+              // Start the timing mini-game
+              const cfg = RARE_MINI_GAME[this.fishing.fish] || { zoneW: 0.30, speed: 0.55 };
+              this.fishing.state = 'minigame';
+              this.fishing.miniGame = {
+                markerPos: 0,
+                markerDir: 1,
+                speed: cfg.speed,
+                zoneStart: 0.5 - cfg.zoneW / 2,
+                zoneEnd:   0.5 + cfg.zoneW / 2,
+                result: null,
+                resultTimer: 0,
+              };
+            } else {
+              this.inventory.push({ name: this.fishing.fish, cooked: false });
+              recordCatch(this.fishing.fish, this);
+              const isNightCatch = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+              if (isNightCatch && this.fishing.fish !== 'Old Boot' && this.fishing.fish !== 'Treasure Chest') {
+                achieveProgress.nightCaught++;
+              }
+              // Consume bait
+              if (this.fishing.usedBait > 0) {
+                this.baitCounts[this.fishing.usedBait]--;
+                if (this.baitCounts[this.baitType] <= 0) this.baitType = 0;
+              }
+              this.fishing = null;
             }
-            this.fishing = null;
+          } else if (this.fishing.state === 'minigame') {
+            const mg = this.fishing.miniGame;
+            if (mg.result) {
+              // Waiting for result display to finish
+              mg.resultTimer -= dt;
+              if (mg.resultTimer <= 0) {
+                if (mg.result === 'success') {
+                  this.inventory.push({ name: this.fishing.fish, cooked: false });
+                  recordCatch(this.fishing.fish, this);
+                  const isNightCatch = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+                  if (isNightCatch) achieveProgress.nightCaught++;
+                  this.eatMessage = { text: `Caught ${this.fishing.fish}!`, timer: 2500 };
+                } else {
+                  this.eatMessage = { text: `${this.fishing.fish} got away!`, timer: 2500 };
+                }
+                if (this.fishing.usedBait > 0) {
+                  this.baitCounts[this.fishing.usedBait]--;
+                  if (this.baitCounts[this.baitType] <= 0) this.baitType = 0;
+                }
+                this.fishing = null;
+              }
+            } else {
+              // Animate the marker
+              mg.markerPos += mg.markerDir * mg.speed * dt / 1000;
+              if (mg.markerPos >= 1) { mg.markerPos = 1; mg.markerDir = -1; }
+              if (mg.markerPos <= 0) { mg.markerPos = 0; mg.markerDir = 1; }
+              if (Input.justPressed(this.actionKey)) {
+                const inZone = mg.markerPos >= mg.zoneStart && mg.markerPos <= mg.zoneEnd;
+                mg.result = inZone ? 'success' : 'fail';
+                mg.resultTimer = 1400;
+              }
+            }
+          }
+        }
+        this.moving = false;
+        return;
+      }
+
+      // Netting logic
+      if (this.netting) {
+        if (wantsMove) {
+          this.netting = null;
+        } else {
+          this.netting.timer -= dt;
+          if (this.netting.state === 'throwing' && this.netting.timer <= 0) {
+            const waitTime = (3000 + Math.random() * 3000) * NET_TYPES[this.netTier].speedMult;
+            this.netting.state = 'waiting';
+            this.netting.timer = waitTime;
+          } else if (this.netting.state === 'waiting' && this.netting.timer <= 0) {
+            this.netting.state = 'caught';
+            this.netting.crustacean = pickCrustacean(NET_TYPES[this.netTier].rareMult);
+          } else if (this.netting.state === 'caught' && Input.justPressed(this.netKey)) {
+            this.inventory.push({ name: this.netting.crustacean, cooked: false });
+            recordCatch(this.netting.crustacean, this);
+            this.netting = null;
           }
         }
         this.moving = false;
@@ -264,14 +421,23 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
           this.moving = false;
           return;
         }
-        // Bed — sleep through night
+        // Bed — both players must get in bed to sleep
         if (ft.tile === 9) {
-          if (typeof sleepState !== 'undefined' && !sleepState.active) {
+          if (!sleepState.active) {
             const tod = getTimeOfDay();
             if (tod === 'Night' || tod === 'Dusk') {
-              sleepState.active = true;
-              sleepState.phase = 'fadeOut';
-              sleepState.alpha = 0;
+              if (!this.inBed) {
+                this.inBed = true;
+                if (typeof sleepReady !== 'undefined') {
+                  if (this === Player1) sleepReady.p1 = true;
+                  else sleepReady.p2 = true;
+                }
+                fridgeMessage.text = 'In bed — waiting for the other player... (Eat key to cancel)';
+                fridgeMessage.timer = 4000;
+              }
+            } else {
+              fridgeMessage.text = 'Can only sleep at Night or Dusk!';
+              fridgeMessage.timer = 2000;
             }
           }
           return;
@@ -328,11 +494,21 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
           }
           return;
         }
+        // Net shop — open net shop
+        if (ft.tile === 15) {
+          if (typeof netShopState !== 'undefined') {
+            netShopState.open = true;
+            netShopState.player = this;
+          }
+          return;
+        }
         // Furnace — cook a raw fish
         if (ft.tile === 11) {
           const rawIdx = this.inventory.findIndex(f => !f.cooked && f.name !== 'Old Boot' && f.name !== 'Treasure Chest');
           if (rawIdx !== -1) {
             this.inventory[rawIdx].cooked = true;
+            achieveProgress.cooked++;
+            this.stats.cooked++;
             fridgeMessage.text = `Cooked ${this.inventory[rawIdx].name}!`;
             fridgeMessage.timer = 2000;
           } else if (this.inventory.some(f => f.cooked)) {
@@ -343,6 +519,28 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
             fridgeMessage.timer = 1500;
           }
           return;
+        }
+      }
+
+      // Net key — cast net into facing water tile
+      if (Input.justPressed(this.netKey)) {
+        if (this.netTier < 0) {
+          this.eatMessage = { text: 'Need a net! Visit the Net Shop.', timer: 2000 };
+        } else {
+          const ft = getFacingTile(this);
+          if (ft.tile === 2) {
+            this.netting = {
+              state: 'throwing',
+              timer: 600,
+              throwDuration: 600,
+              targetX: ft.col * TILE + TILE / 2,
+              targetY: ft.row * TILE + TILE / 2,
+              crustacean: null,
+            };
+            this.moving = false;
+          } else {
+            this.eatMessage = { text: 'Face water to cast net!', timer: 1500 };
+          }
         }
       }
 
@@ -469,6 +667,16 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
       ctx.lineWidth = 0.5;
       ctx.strokeRect(barX, hunBarY, barW, barH);
 
+      // Zzz above head when in bed waiting
+      if (this.inBed) {
+        const zSize = 9 + Math.sin(Date.now() / 500) * 2;
+        ctx.fillStyle = '#90c8f0';
+        ctx.font = `bold ${Math.round(zSize)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('Zzz', sx + this.w / 2, sy - 14);
+        ctx.textAlign = 'left';
+      }
+
       // Eat message above head
       if (this.eatMessage) {
         ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -479,6 +687,54 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         ctx.textAlign = 'center';
         ctx.fillText(this.eatMessage.text, sx + this.w / 2, sy - 25);
         ctx.textAlign = 'left';
+      }
+
+      // Netting visuals
+      if (this.netting) {
+        const netSX = this.netting.targetX - camera.x;
+        const netSY = this.netting.targetY - camera.y;
+        const handX = sx + this.w / 2;
+        const handY = sy + this.h / 2;
+
+        ctx.strokeStyle = NET_TYPES[this.netTier].color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(handX, handY);
+        if (this.netting.state === 'throwing') {
+          const prog = 1 - (this.netting.timer / (this.netting.throwDuration || 600));
+          ctx.lineTo(handX + (netSX - handX) * prog, handY + (netSY - handY) * prog);
+        } else {
+          ctx.lineTo(netSX, netSY);
+        }
+        ctx.stroke();
+
+        if (this.netting.state !== 'throwing') {
+          const pulse = Math.sin(Date.now() / 400) * 2;
+          ctx.strokeStyle = NET_TYPES[this.netTier].color;
+          ctx.lineWidth = 1;
+          // Draw net circle
+          ctx.beginPath();
+          ctx.arc(netSX, netSY, 8 + pulse, 0, Math.PI * 2);
+          ctx.stroke();
+          // Cross lines inside circle
+          ctx.beginPath();
+          ctx.moveTo(netSX - 6, netSY); ctx.lineTo(netSX + 6, netSY);
+          ctx.moveTo(netSX, netSY - 6); ctx.lineTo(netSX, netSY + 6);
+          ctx.stroke();
+        }
+
+        if (this.netting.state === 'caught') {
+          ctx.fillStyle = '#ffff00';
+          ctx.font = 'bold 16px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('!', sx + this.w / 2, sy - 12);
+          ctx.textAlign = 'left';
+          ctx.fillStyle = '#a0f0c0';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(this.netting.crustacean, sx + this.w / 2, sy - 22);
+          ctx.textAlign = 'left';
+        }
       }
 
       // Fishing visuals
@@ -543,7 +799,7 @@ const Player1 = createPlayer(20 + 4, 15 + 6, {
   head: '#f5d6a8',
   hair: '#5a3a1a',
   legs: '#4a6fa5',
-}, () => Input.getDirectionWASD(), 'KeyF', 'KeyE', 'KeyQ');
+}, () => Input.getDirectionWASD(), 'KeyF', 'KeyE', 'KeyQ', 'KeyG');
 
 // Player 2: Arrows - cool colors
 const Player2 = createPlayer(20 + 16, 15 + 8, {
@@ -551,4 +807,4 @@ const Player2 = createPlayer(20 + 16, 15 + 8, {
   head: '#c8e0f0',
   hair: '#2a4a6a',
   legs: '#a05a4a',
-}, () => Input.getDirectionArrows(), 'Slash', 'Period', 'Comma');
+}, () => Input.getDirectionArrows(), 'Slash', 'Period', 'Comma', 'KeyM');
