@@ -1,6 +1,6 @@
 const TILE = 32;
 
-// Tile types: 0=grass, 1=wall, 2=water, 3=path, 4=tree, 5=house_wall, 6=door, 7=house_floor, 8=furniture, 9=bed, 10=fridge, 11=furnace, 12=trashcan, 13=shop, 14=baitshop, 15=netshop, 16=sellstand
+// Tile types: 0=grass, 1=wall, 2=water, 3=path, 4=tree, 5=house_wall, 6=door, 7=house_floor, 8=furniture, 9=bed, 10=fridge, 11=furnace, 12=trashcan, 13=shop, 14=baitshop, 15=netshop, 16=sellstand, 17=boatshop, 18=autodock1, 19=autodock2
 const TILE_COLORS = {
   0: '#4a7c3f', // grass
   1: '#6b6b6b', // wall
@@ -19,9 +19,12 @@ const TILE_COLORS = {
   14: '#4a7c3f', // bait shop counter (grass base, drawn over)
   15: '#4a7c3f', // net shop counter (grass base, drawn over)
   16: '#4a7c3f', // sell stand counter (grass base, drawn over)
+  17: '#4a7c3f', // boat shop counter (grass base, drawn over)
+  18: '#c2a85d', // auto-dock 1 (sand base, drawn over)
+  19: '#c2a85d', // auto-dock 2 (sand base, drawn over)
 };
 
-const SOLID_TILES = new Set([1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+const SOLID_TILES = new Set([1, 2, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
 
 const CHUNK_COLS = 20;
 const CHUNK_ROWS = 15;
@@ -145,8 +148,8 @@ const CHUNK_LAKE = { data: [
   [0,5,16,5,0,0,0,0,0,0,4,2,2,4,0,0,0,0,0,4],
   [3,3,3,3,3,3,3,0,3,0,0,0,0,0,0,0,0,0,0,4],
   [0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4],
-  [4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4],
-  [4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4],
+  [4,0,0,0,0,0,0,0,3,0,0,0,0,0,5,5,5,0,0,4],
+  [4,0,0,0,0,0,0,0,3,0,0,0,0,0,5,17,5,0,0,4],
   [4,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,0,0,4],
   [4,4,4,4,4,4,4,0,3,0,4,4,4,4,4,4,4,4,4,4],
 ], houses: [] };
@@ -190,7 +193,7 @@ const CHUNK_FARM = { data: [
   [4,0,0,1,1,0,0,0,0,0,0,0,0,0,0,3,0,0,0,4],
   [4,0,0,1,1,0,0,0,0,0,0,0,0,0,0,3,3,0,0,4],
   [4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4],
-  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,0,3,0,4,4,4,4,4,4,4,4,4,4],
 ], houses: [] };
 
 const CHUNK_SWAMP = { data: [
@@ -211,15 +214,77 @@ const CHUNK_SWAMP = { data: [
   [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
 ], houses: [] };
 
-// ── World grid (3x3 chunks) ───────────────────────────────────────────
+// ── Beach chunks (row 3 of world) ────────────────────────────────────
+// Tile 3 (sand colour #c2a85d) = beach sand.  Tile 18 = auto-dock.
+// North-south path enters CHUNK_BEACH_C at col 8 from CHUNK_FARM south.
+// East-west promenade at row 7 links all three beach chunks.
+
+const CHUNK_BEACH_W = { data: [
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [4,4,4,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+], houses: [] };
+
+// Shops: row 2 = walls, row 3 = counters (player stands row 4+ facing north).
+// Path col 8 runs north→south, ending at auto-dock (tile 18) at col 8 row 8.
+const CHUNK_BEACH_C = { data: [
+  [4,4,4,4,4,4,4,0,3,0,4,4,4,4,4,4,4,4,4,4],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,5,5,5,3,5,5,5,3,5,5,5,3,5,5,5,3,5,5,5],
+  [3,5,13,5,3,5,14,5,3,5,15,5,3,5,16,5,3,5,17,5],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [3,3,3,3,3,3,3,3,18,3,3,19,3,3,3,3,3,3,3,3],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+], houses: [] };
+
+const CHUNK_BEACH_E = { data: [
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4],
+  [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+  [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+], houses: [] };
+
+// ── World grid (3x4 chunks) ───────────────────────────────────────────
 const WORLD_GRID = [
   [CHUNK_FOREST_NW, CHUNK_FOREST_N, CHUNK_FOREST_NE],
   [CHUNK_PLAINS,    CHUNK_VILLAGE,   CHUNK_LAKE      ],
   [CHUNK_MEADOW,    CHUNK_FARM,      CHUNK_SWAMP     ],
+  [CHUNK_BEACH_W,   CHUNK_BEACH_C,   CHUNK_BEACH_E   ],
 ];
 
 const WORLD_COLS = WORLD_GRID[0].length; // 3 chunks wide
-const WORLD_ROWS = WORLD_GRID.length;    // 3 chunks tall
+const WORLD_ROWS = WORLD_GRID.length;    // 4 chunks tall
 
 // ── Build global HOUSES array with world offsets ──────────────────────
 const HOUSES = [];
@@ -531,6 +596,87 @@ const GameMap = {
           ctx.fillStyle = '#5a5a5a';
           ctx.fillRect(x + 8, y + 14, 16, 1);
           ctx.fillRect(x + 8, y + 20, 16, 1);
+        }
+
+        // Auto-fishing dock helper — shared drawing logic
+        if (tile === 18 || tile === 19) {
+          const dockColor = tile === 18 ? '#e8c170' : '#70b8e0'; // P1 gold / P2 blue
+          const label     = tile === 18 ? 'DOCK 1' : 'DOCK 2';
+          // Platform
+          ctx.fillStyle = '#7a4e20';
+          ctx.fillRect(x + 2, y + 4, 28, 24);
+          // Plank lines
+          ctx.strokeStyle = '#5a3010';
+          ctx.lineWidth = 1;
+          for (let pi = 0; pi < 4; pi++) {
+            ctx.beginPath();
+            ctx.moveTo(x + 2, y + 9 + pi * 6);
+            ctx.lineTo(x + 30, y + 9 + pi * 6);
+            ctx.stroke();
+          }
+          // Colour stripe at top of platform
+          ctx.fillStyle = dockColor;
+          ctx.globalAlpha = 0.55;
+          ctx.fillRect(x + 2, y + 4, 28, 4);
+          ctx.globalAlpha = 1;
+          // Dock posts
+          ctx.fillStyle = '#5a3010';
+          ctx.fillRect(x + 5,  y + 24, 4, 10);
+          ctx.fillRect(x + 23, y + 24, 4, 10);
+          // Fishing rod pole
+          ctx.strokeStyle = '#c8a060';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x + TILE / 2, y + 4);
+          ctx.lineTo(x + TILE / 2, y + 26);
+          ctx.stroke();
+          // Line into water
+          ctx.strokeStyle = 'rgba(180,180,180,0.6)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x + TILE / 2, y + 26);
+          ctx.lineTo(x + TILE / 2, y + TILE + 8);
+          ctx.stroke();
+          // Label
+          ctx.fillStyle = dockColor;
+          ctx.font = 'bold 6px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(label, x + TILE / 2, y + 20);
+          ctx.textAlign = 'left';
+        }
+
+        // Boat shop counter detail
+        if (tile === 17) {
+          // Counter body
+          ctx.fillStyle = '#3e4e5e';
+          ctx.fillRect(x + 2, y + 6, 28, 22);
+          // Counter top (nautical blue-grey)
+          ctx.fillStyle = '#5a7a9a';
+          ctx.fillRect(x + 1, y + 4, 30, 6);
+          // Sign board
+          ctx.fillStyle = '#1a3a5a';
+          ctx.fillRect(x + 3, y - 2, 26, 8);
+          ctx.fillStyle = '#90e0ff';
+          ctx.font = 'bold 6px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('BOATS', x + TILE / 2, y + 4);
+          ctx.textAlign = 'left';
+          // Mini boat silhouette on counter
+          ctx.fillStyle = '#8b5a2b';
+          ctx.fillRect(x + 6, y + 14, 20, 6);
+          ctx.fillStyle = '#5a3010';
+          ctx.fillRect(x + 8, y + 18, 16, 3);
+          // Mast
+          ctx.fillStyle = '#c8a060';
+          ctx.fillRect(x + 15, y + 10, 2, 6);
+          // Sail
+          ctx.fillStyle = '#e8e8ff';
+          ctx.beginPath();
+          ctx.moveTo(x + 17, y + 10);
+          ctx.lineTo(x + 23, y + 13);
+          ctx.lineTo(x + 17, y + 16);
+          ctx.closePath();
+          ctx.fill();
         }
 
         // House floor plank lines

@@ -133,6 +133,7 @@ function createNpc() {
     result: null,     // { text, timer, color }
     fadeOut: 0,       // fade after interaction
     bobTimer: 0,      // idle bobbing animation
+    idleTimer: 0,     // time alive without interaction (ms)
     exclamation: true, // show "?" above head
   };
 }
@@ -162,7 +163,17 @@ const NPCManager = {
           if (npc.result.timer <= 0) {
             npc.fadeOut += dt;
           }
+        } else {
+          // Timed out with no interaction — just fade
+          npc.fadeOut += dt;
         }
+        continue;
+      }
+
+      // Idle timeout — leave after 1 minute if nobody talks to them
+      npc.idleTimer += dt;
+      if (npc.idleTimer >= 60000) {
+        npc.triggered = true;  // stops collision; result stays null so fadeOut runs
         continue;
       }
 

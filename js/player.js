@@ -49,6 +49,20 @@ const NET_TYPES = [
   { name: 'Deep Trap',    color: '#1a6030', speedMult: 0.35, rareMult: 3.5, cost: 800 },
 ];
 
+// Boat tiers — purchased at the boat shop near the lake
+const BOAT_TYPES = [
+  { name: 'Rowboat',   color: '#8b5a2b', waterSpeedMult: 0.80, cost: 250 },
+  { name: 'Speedboat', color: '#8888aa', waterSpeedMult: 1.15, cost: 800 },
+];
+
+// Auto-dock upgrade tiers — each dock starts at tier 0 and can be upgraded
+const DOCK_TIERS = [
+  { name: 'Basic Dock',    storageMax: 15,  intervalMult: 1.00, cost: 0    },
+  { name: 'Enhanced Dock', storageMax: 30,  intervalMult: 0.80, cost: 300  },
+  { name: 'Advanced Dock', storageMax: 60,  intervalMult: 0.60, cost: 700  },
+  { name: 'Elite Dock',    storageMax: 100, intervalMult: 0.40, cost: 1500 },
+];
+
 // Shared achievement progress — read by game.js (loaded after player.js)
 const achieveProgress = {
   fishCaught: 0,
@@ -187,6 +201,9 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
     netTier: -1,           // -1 = no net, 0+ = net tier owned
     netting: null,         // active netting state
     netKey,
+    hasBoat: false,        // owns at least a boat
+    onBoat: false,         // currently on a water tile
+    boatTier: -1,          // index into BOAT_TYPES (-1 = none)
     inBed: false,          // waiting for the other player to sleep
     stats: {               // per-player statistics for leaderboard
       fishCaught: 0,
@@ -200,6 +217,11 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
     update(dt, otherPlayer) {
       const dir = this.getDirection();
       const wantsMove = dir.dx !== 0 || dir.dy !== 0;
+
+      // Update boat state — are we currently sitting on a water tile?
+      const pcx = Math.floor((this.x + this.w / 2) / TILE);
+      const pcy = Math.floor((this.y + this.h / 2) / TILE);
+      this.onBoat = this.hasBoat && GameMap.getTile(pcx, pcy) === 2;
 
       // Hunger increases over time — +1 every 10 seconds
       this.hungerTimer += dt;
@@ -304,13 +326,13 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
         } else {
           this.fishing.timer -= dt;
           if (this.fishing.state === 'casting' && this.fishing.timer <= 0) {
-            const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+            const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.76 || worldTime < 0.08);
             const rod = FISHING_RODS[this.rodTier];
             const waitTime = (isNight ? (2000 + Math.random() * 2000) : (3000 + Math.random() * 3000)) * rod.speedMult;
             this.fishing.state = 'waiting';
             this.fishing.timer = waitTime;
           } else if (this.fishing.state === 'waiting' && this.fishing.timer <= 0) {
-            const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+            const isNight = typeof worldTime !== 'undefined' && (worldTime > 0.76 || worldTime < 0.08);
             const activeBait = (this.baitType > 0 && this.baitCounts[this.baitType] > 0) ? this.baitType : 0;
             this.fishing.state = 'caught';
             this.fishing.fish = pickFish(isNight, FISHING_RODS[this.rodTier].rareMult, activeBait);
@@ -333,7 +355,7 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
             } else {
               this.inventory.push({ name: this.fishing.fish, cooked: false });
               recordCatch(this.fishing.fish, this);
-              const isNightCatch = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+              const isNightCatch = typeof worldTime !== 'undefined' && (worldTime > 0.76 || worldTime < 0.08);
               if (isNightCatch && this.fishing.fish !== 'Old Boot' && this.fishing.fish !== 'Treasure Chest') {
                 achieveProgress.nightCaught++;
               }
@@ -353,7 +375,7 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
                 if (mg.result === 'success') {
                   this.inventory.push({ name: this.fishing.fish, cooked: false });
                   recordCatch(this.fishing.fish, this);
-                  const isNightCatch = typeof worldTime !== 'undefined' && (worldTime > 0.625 || worldTime < 0.125);
+                  const isNightCatch = typeof worldTime !== 'undefined' && (worldTime > 0.76 || worldTime < 0.08);
                   if (isNightCatch) achieveProgress.nightCaught++;
                   this.eatMessage = { text: `Caught ${this.fishing.fish}!`, timer: 2500 };
                 } else {
@@ -408,14 +430,17 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
       // Action key interactions
       if (Input.justPressed(this.actionKey)) {
         const ft = getFacingTile(this);
-        // Fishing — face water
-        if (ft.tile === 2) {
+        // Fishing — face water OR already on water (boat fishing)
+        if (ft.tile === 2 || this.onBoat) {
+          // When on boat, bob goes to the facing tile (adjacent water or open direction)
+          const bobX = ft.col * TILE + TILE / 2;
+          const bobY = ft.row * TILE + TILE / 2;
           this.fishing = {
             state: 'casting',
             timer: FISHING_RODS[this.rodTier].castTime,
             castDuration: FISHING_RODS[this.rodTier].castTime,
-            bobX: ft.col * TILE + TILE / 2,
-            bobY: ft.row * TILE + TILE / 2,
+            bobX,
+            bobY,
             fish: null,
           };
           this.moving = false;
@@ -502,6 +527,34 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
           }
           return;
         }
+        // Auto-fishing dock 1 — open dock UI
+        if (ft.tile === 18) {
+          if (typeof dockUIState !== 'undefined') {
+            dockUIState.open = true;
+            dockUIState.player = this;
+            dockUIState.dockIdx = 0;
+            dockUIState.cursor = 0;
+          }
+          return;
+        }
+        // Auto-fishing dock 2 — open dock UI
+        if (ft.tile === 19) {
+          if (typeof dockUIState !== 'undefined') {
+            dockUIState.open = true;
+            dockUIState.player = this;
+            dockUIState.dockIdx = 1;
+            dockUIState.cursor = 0;
+          }
+          return;
+        }
+        // Boat shop — open boat shop
+        if (ft.tile === 17) {
+          if (typeof boatShopState !== 'undefined') {
+            boatShopState.open = true;
+            boatShopState.player = this;
+          }
+          return;
+        }
         // Furnace — cook a raw fish
         if (ft.tile === 11) {
           const rawIdx = this.inventory.findIndex(f => !f.cooked && f.name !== 'Old Boot' && f.name !== 'Treasure Chest');
@@ -548,8 +601,10 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
 
       if (this.moving) {
         let len = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy);
-        let mx = (dir.dx / len) * this.speed;
-        let my = (dir.dy / len) * this.speed;
+        let spd = this.speed;
+        if (this.onBoat) spd *= BOAT_TYPES[this.boatTier].waterSpeedMult;
+        let mx = (dir.dx / len) * spd;
+        let my = (dir.dy / len) * spd;
 
         if (Math.abs(dir.dx) > Math.abs(dir.dy)) {
           this.facing = dir.dx > 0 ? 'right' : 'left';
@@ -585,12 +640,19 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
       const top = y + pad;
       const bottom = y + this.h - pad;
 
-      if (
-        GameMap.isSolid(Math.floor(left / TILE), Math.floor(top / TILE)) ||
-        GameMap.isSolid(Math.floor(right / TILE), Math.floor(top / TILE)) ||
-        GameMap.isSolid(Math.floor(left / TILE), Math.floor(bottom / TILE)) ||
-        GameMap.isSolid(Math.floor(right / TILE), Math.floor(bottom / TILE))
-      ) return true;
+      const corners = [
+        [Math.floor(left / TILE),  Math.floor(top / TILE)],
+        [Math.floor(right / TILE), Math.floor(top / TILE)],
+        [Math.floor(left / TILE),  Math.floor(bottom / TILE)],
+        [Math.floor(right / TILE), Math.floor(bottom / TILE)],
+      ];
+      for (const [col, row] of corners) {
+        const tile = GameMap.getTile(col, row);
+        if (SOLID_TILES.has(tile)) {
+          if (this.hasBoat && tile === 2) continue; // boat owners can cross water
+          return true;
+        }
+      }
 
       if (otherPlayer) {
         const oPad = 4;
@@ -610,6 +672,28 @@ function createPlayer(startCol, startRow, colors, getDirection, actionKey, eatKe
     draw(ctx, camera) {
       const sx = this.x - camera.x;
       const sy = this.y - camera.y;
+
+      // Boat hull — drawn first so the player sits on top
+      if (this.onBoat) {
+        const boat = BOAT_TYPES[this.boatTier];
+        // Hull
+        ctx.fillStyle = boat.color;
+        ctx.fillRect(sx - 5, sy + 16, this.w + 10, 10);
+        // Keel
+        ctx.fillStyle = '#4a2808';
+        ctx.fillRect(sx - 3, sy + 23, this.w + 6, 3);
+        // Hull highlight
+        ctx.fillStyle = 'rgba(255,255,255,0.22)';
+        ctx.fillRect(sx - 5, sy + 16, this.w + 10, 2);
+        // Speedboat windshield detail
+        if (this.boatTier >= 1) {
+          ctx.fillStyle = 'rgba(140,220,255,0.5)';
+          ctx.fillRect(sx + 4, sy + 12, 10, 5);
+          ctx.strokeStyle = '#aaa';
+          ctx.lineWidth = 0.5;
+          ctx.strokeRect(sx + 4, sy + 12, 10, 5);
+        }
+      }
 
       // Body
       ctx.fillStyle = this.colors.body;

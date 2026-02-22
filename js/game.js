@@ -32,6 +32,27 @@ const baitShopState = { open: false, player: null, cursor: 1 };
 // Net shop state
 const netShopState = { open: false, player: null, cursor: 0 };
 
+// Boat shop state
+const boatShopState = { open: false, player: null, cursor: 0 };
+
+// Auto-fishing docks — two independent docks, each upgradeable
+function makeDock() {
+  return {
+    tier: 0,
+    attachedPlayer: null,
+    timer: 0,
+    storage: [],
+    get catchInterval() {
+      if (!this.attachedPlayer) return 30000;
+      return Math.round(30000 * FISHING_RODS[this.attachedPlayer.rodTier].speedMult * DOCK_TIERS[this.tier].intervalMult);
+    },
+  };
+}
+const boatDocks = [makeDock(), makeDock()];
+
+// Dock UI state — shared menu for both docks
+const dockUIState = { open: false, player: null, dockIdx: 0, cursor: 0 };
+
 // Give gold state — player-to-player money transfer
 const giveGoldState = { open: false, giver: null, receiver: null, cursor: 0 };
 const GIVE_AMOUNTS = [10, 50, 100, 500, 'All'];
@@ -383,9 +404,9 @@ function drawStartScreen(dt) {
 }
 
 function getTimeOfDay() {
-  if (worldTime < 0.125)  return 'Dawn';
-  if (worldTime < 0.375)  return 'Day';
-  if (worldTime < 0.625)  return 'Dusk';
+  if (worldTime < 0.08)   return 'Dawn';
+  if (worldTime < 0.62)   return 'Day';
+  if (worldTime < 0.76)   return 'Dusk';
   return 'Night';
 }
 
@@ -409,7 +430,7 @@ function updateSleep(dt) {
       sleepState.alpha = 1;
       sleepState.phase = 'sleeping';
       // Advance time to dawn
-      worldTime = 0.125;
+      worldTime = 0.08;
     }
   } else if (sleepState.phase === 'sleeping') {
     achieveProgress.sleeps++;
@@ -441,7 +462,7 @@ function drawSleepOverlay() {
 
 function drawDayNight() {
   // Darkness: cosine curve, 0 at noon (0.25), max at midnight (0.75)
-  const darkness = 0.65 * (0.5 - 0.5 * Math.cos((worldTime - 0.25) * Math.PI * 2));
+  const darkness = 0.30 * (0.5 - 0.5 * Math.cos((worldTime - 0.25) * Math.PI * 2));
 
   // Night overlay
   if (darkness > 0.01) {
@@ -970,6 +991,328 @@ function drawNetShop() {
   ctx.textAlign = 'left';
 }
 
+function updateBoatDock(dt) {
+  for (const dock of boatDocks) {
+    if (!dock.attachedPlayer) continue;
+    const tier = DOCK_TIERS[dock.tier];
+    if (dock.storage.length >= tier.storageMax) continue;
+    dock.timer -= dt;
+    if (dock.timer <= 0) {
+      const p = dock.attachedPlayer;
+      dock.timer = dock.catchInterval;
+      const isNight = worldTime > 0.76 || worldTime < 0.08;
+      const activeBait = (p.baitType > 0 && p.baitCounts[p.baitType] > 0) ? p.baitType : 0;
+      const fishName = pickFish(isNight, FISHING_RODS[p.rodTier].rareMult, activeBait);
+      dock.storage.push({ name: fishName, cooked: false });
+      recordCatch(fishName, p);
+      if (activeBait > 0) {
+        p.baitCounts[activeBait]--;
+        if (p.baitCounts[p.baitType] <= 0) p.baitType = 0;
+      }
+    }
+  }
+}
+
+function updateDockUI() {
+  if (!dockUIState.open) return;
+  const p = dockUIState.player;
+  const dock = boatDocks[dockUIState.dockIdx];
+  const numOpts = 4; // 0=Collect 1=Attach/Detach 2=Upgrade 3=Close
+
+  if (Input.justPressed('KeyW') || Input.justPressed('ArrowUp')) {
+    dockUIState.cursor = Math.max(0, dockUIState.cursor - 1);
+  }
+  if (Input.justPressed('KeyS') || Input.justPressed('ArrowDown')) {
+    dockUIState.cursor = Math.min(numOpts - 1, dockUIState.cursor + 1);
+  }
+
+  if (Input.justPressed(p.actionKey)) {
+    if (dockUIState.cursor === 0) {
+      // Collect
+      if (dock.storage.length > 0) {
+        const collected = dock.storage.splice(0);
+        for (const fish of collected) p.inventory.push(fish);
+        fridgeMessage.text = `Collected ${collected.length} fish from Dock ${dockUIState.dockIdx + 1}!`;
+        fridgeMessage.timer = 2500;
+      } else {
+        fridgeMessage.text = 'No fish stored yet!';
+        fridgeMessage.timer = 1500;
+      }
+    } else if (dockUIState.cursor === 1) {
+      // Attach / Detach
+      if (dock.attachedPlayer === p) {
+        dock.attachedPlayer = null;
+        fridgeMessage.text = 'Rod detached from dock.';
+        fridgeMessage.timer = 2000;
+      } else if (!dock.attachedPlayer) {
+        dock.attachedPlayer = p;
+        dock.timer = dock.catchInterval;
+        const rod = FISHING_RODS[p.rodTier];
+        fridgeMessage.text = `${rod.name} attached! Catches every ~${Math.round(dock.catchInterval / 1000)}s.`;
+        fridgeMessage.timer = 3500;
+      } else {
+        fridgeMessage.text = 'Another rod is already attached!';
+        fridgeMessage.timer = 2000;
+      }
+    } else if (dockUIState.cursor === 2) {
+      // Upgrade
+      const nextTier = dock.tier + 1;
+      if (nextTier >= DOCK_TIERS.length) {
+        fridgeMessage.text = 'Dock is already max level!';
+        fridgeMessage.timer = 1500;
+      } else {
+        const cost = DOCK_TIERS[nextTier].cost;
+        if (p.gold < cost) {
+          fridgeMessage.text = `Need ${cost}g! (have ${p.gold}g)`;
+          fridgeMessage.timer = 1500;
+        } else {
+          p.gold -= cost;
+          dock.tier = nextTier;
+          fridgeMessage.text = `Dock ${dockUIState.dockIdx + 1} upgraded to ${DOCK_TIERS[nextTier].name}!`;
+          fridgeMessage.timer = 3000;
+        }
+      }
+    } else if (dockUIState.cursor === 3) {
+      dockUIState.open = false;
+    }
+  }
+
+  if (Input.justPressed(p.eatKey) || Input.justPressed('Escape')) {
+    dockUIState.open = false;
+  }
+}
+
+function drawDockUI() {
+  if (!dockUIState.open) return;
+  const p = dockUIState.player;
+  const dock = boatDocks[dockUIState.dockIdx];
+  const dockLabel = `Auto-Dock ${dockUIState.dockIdx + 1}`;
+  const dockColor = dockUIState.dockIdx === 0 ? '#e8c170' : '#70b8e0';
+  const tier = DOCK_TIERS[dock.tier];
+
+  const panelW = 340;
+  const lineH = 32;
+  const headerH = 68;
+  const footerH = 22;
+  const numOpts = 4;
+  const panelH = headerH + numOpts * lineH + footerH;
+  const px = (SCREEN_W - panelW) / 2;
+  const py = (SCREEN_H - panelH) / 2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
+  ctx.fillRect(px, py, panelW, panelH);
+  ctx.strokeStyle = dockColor;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, panelW, panelH);
+
+  ctx.fillStyle = dockColor;
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(dockLabel, px + panelW / 2, py + 22);
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = '10px monospace';
+  ctx.fillText(`${tier.name}  |  Storage: ${dock.storage.length}/${tier.storageMax}`, px + panelW / 2, py + 40);
+  const rodDesc = dock.attachedPlayer ? FISHING_RODS[dock.attachedPlayer.rodTier].name + (dock.attachedPlayer === Player1 ? ' (P1)' : ' (P2)') : 'No rod attached';
+  ctx.fillText(`Rod: ${rodDesc}`, px + panelW / 2, py + 56);
+  ctx.textAlign = 'left';
+
+  const nextTierCost = dock.tier < DOCK_TIERS.length - 1 ? DOCK_TIERS[dock.tier + 1].cost : null;
+  const opts = [
+    { label: `Collect Fish  (${dock.storage.length} stored)`,       enabled: dock.storage.length > 0 },
+    { label: dock.attachedPlayer === p ? 'Detach Your Rod' : (dock.attachedPlayer ? 'Slot Occupied' : 'Attach Your Rod'), enabled: dock.attachedPlayer === p || !dock.attachedPlayer },
+    { label: nextTierCost !== null ? `Upgrade  →  ${DOCK_TIERS[dock.tier + 1].name}  (${nextTierCost}g)` : 'Upgrade  (MAX LEVEL)', enabled: nextTierCost !== null },
+    { label: 'Close',                                                enabled: true },
+  ];
+
+  for (let i = 0; i < opts.length; i++) {
+    const opt = opts[i];
+    const y = py + headerH + i * lineH;
+    const selected = i === dockUIState.cursor;
+
+    if (selected) {
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(px + 4, y + 2, panelW - 8, lineH - 4);
+      ctx.fillStyle = dockColor;
+      ctx.font = '12px monospace';
+      ctx.fillText('>', px + 10, y + 21);
+    }
+
+    ctx.fillStyle = opt.enabled ? '#fff' : '#555';
+    ctx.font = (selected ? 'bold ' : '') + '12px monospace';
+    ctx.fillText(opt.label, px + 28, y + 21);
+  }
+
+  ctx.fillStyle = '#555';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`Gold: ${p.gold}g  |  W/S: navigate  |  Action: select  |  Eat/Esc: close`, px + panelW / 2, py + panelH - 7);
+  ctx.textAlign = 'left';
+}
+
+function drawBoatDockHUD() {
+  const activeDocks = boatDocks.filter(d => d.attachedPlayer);
+  if (activeDocks.length === 0) return;
+
+  const w = 190, h = 28;
+  const gap = 8;
+  const totalW = activeDocks.length * w + (activeDocks.length - 1) * gap;
+  let startX = (SCREEN_W - totalW) / 2;
+  const py = SCREEN_H - 52;
+
+  for (let idx = 0; idx < boatDocks.length; idx++) {
+    const dock = boatDocks[idx];
+    if (!dock.attachedPlayer) continue;
+    const p = dock.attachedPlayer;
+    const pName = p === Player1 ? 'P1' : 'P2';
+    const dockColor = idx === 0 ? '#e8c170' : '#70b8e0';
+    const tier = DOCK_TIERS[dock.tier];
+    const interval = dock.catchInterval;
+    const elapsed = interval - dock.timer;
+    const progress = Math.max(0, Math.min(1, elapsed / interval));
+    const secs = Math.ceil(dock.timer / 1000);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(startX, py, w, h);
+    ctx.strokeStyle = dockColor;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(startX, py, w, h);
+
+    ctx.fillStyle = '#3a5a8a';
+    ctx.fillRect(startX + 2, py + 16, (w - 4) * progress, 9);
+    ctx.strokeStyle = '#2a3a5a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(startX + 2, py + 16, w - 4, 9);
+
+    ctx.fillStyle = dockColor;
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Dock${idx + 1} ${pName}: ${dock.storage.length}/${tier.storageMax}  (${secs}s)`, startX + w / 2, py + 12);
+    ctx.textAlign = 'left';
+
+    startX += w + gap;
+  }
+}
+
+function updateBoatShop() {
+  if (!boatShopState.open) return;
+  const p = boatShopState.player;
+
+  if (Input.justPressed('KeyW') || Input.justPressed('ArrowUp')) {
+    boatShopState.cursor = Math.max(0, boatShopState.cursor - 1);
+  }
+  if (Input.justPressed('KeyS') || Input.justPressed('ArrowDown')) {
+    boatShopState.cursor = Math.min(BOAT_TYPES.length - 1, boatShopState.cursor + 1);
+  }
+
+  if (Input.justPressed(p.actionKey)) {
+    const boat = BOAT_TYPES[boatShopState.cursor];
+    if (boatShopState.cursor <= p.boatTier) {
+      fridgeMessage.text = boatShopState.cursor === p.boatTier ? 'Already have this boat!' : 'Already have a better boat!';
+      fridgeMessage.timer = 1500;
+    } else if (p.gold < boat.cost) {
+      fridgeMessage.text = `Need ${boat.cost}g! (have ${p.gold}g)`;
+      fridgeMessage.timer = 1500;
+    } else {
+      p.gold -= boat.cost;
+      p.boatTier = boatShopState.cursor;
+      p.hasBoat = true;
+      fridgeMessage.text = `Bought ${boat.name}! Walk onto water to sail.`;
+      fridgeMessage.timer = 3000;
+    }
+  }
+
+  if (Input.justPressed(p.eatKey) || Input.justPressed('Escape')) {
+    boatShopState.open = false;
+    boatShopState.player = null;
+  }
+}
+
+function drawBoatShop() {
+  if (!boatShopState.open) return;
+  const p = boatShopState.player;
+
+  const panelW = 320;
+  const lineH = 32;
+  const headerH = 32;
+  const footerH = 24;
+  const panelH = headerH + BOAT_TYPES.length * lineH + footerH;
+  const px = (SCREEN_W - panelW) / 2;
+  const py = (SCREEN_H - panelH) / 2;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
+  ctx.fillRect(px, py, panelW, panelH);
+  ctx.strokeStyle = '#5ab0d8';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, panelW, panelH);
+
+  ctx.fillStyle = '#90e0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Boat Shop', px + panelW / 2, py + 22);
+  ctx.textAlign = 'left';
+
+  for (let i = 0; i < BOAT_TYPES.length; i++) {
+    const boat = BOAT_TYPES[i];
+    const y = py + headerH + i * lineH;
+    const selected = i === boatShopState.cursor;
+    const owned = i <= p.boatTier;
+    const equipped = i === p.boatTier;
+    const canAfford = p.gold >= boat.cost;
+
+    if (selected) {
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(px + 4, y + 2, panelW - 8, lineH - 4);
+      ctx.fillStyle = '#90e0ff';
+      ctx.font = '12px monospace';
+      ctx.fillText('>', px + 8, y + 20);
+    }
+
+    // Boat color swatch (hull shape)
+    ctx.fillStyle = boat.color;
+    ctx.fillRect(px + 22, y + 10, 18, 8);
+    ctx.fillStyle = '#4a2808';
+    ctx.fillRect(px + 24, y + 16, 14, 3);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px + 22, y + 10, 18, 11);
+
+    // Name
+    ctx.fillStyle = owned ? '#aaa' : (canAfford ? '#fff' : '#666');
+    ctx.font = '12px monospace';
+    ctx.fillText(boat.name, px + 48, y + 20);
+
+    // Speed label
+    const pct = Math.round((boat.waterSpeedMult - 1) * 100);
+    const speedLabel = pct >= 0 ? `+${pct}% water speed` : `${pct}% water speed`;
+    ctx.fillStyle = '#888';
+    ctx.font = '9px monospace';
+    ctx.fillText(speedLabel, px + 48, y + 30);
+
+    ctx.textAlign = 'right';
+    if (equipped) {
+      ctx.fillStyle = '#4c4';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('EQUIPPED', px + panelW - 12, y + 20);
+    } else if (owned) {
+      ctx.fillStyle = '#888';
+      ctx.font = '11px monospace';
+      ctx.fillText('OWNED', px + panelW - 12, y + 20);
+    } else {
+      ctx.fillStyle = canAfford ? '#ffd700' : '#664400';
+      ctx.font = '11px monospace';
+      ctx.fillText(`${boat.cost}g`, px + panelW - 12, y + 20);
+    }
+    ctx.textAlign = 'left';
+  }
+
+  ctx.fillStyle = '#888';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`Gold: ${p.gold}g  |  W/S: browse  |  Action: buy  |  Eat/Esc: close`, px + panelW / 2, py + panelH - 8);
+  ctx.textAlign = 'left';
+}
+
 // ── Rare fish mini-game overlay ─────────────────────────────────────────
 function drawMiniGame() {
   const ACTION_KEY_LABELS = { 'KeyF': 'F', 'Slash': '/' };
@@ -1382,6 +1725,12 @@ function drawHUD() {
     ctx.arc(157, 17, 3, 0, Math.PI * 2);
     ctx.fill();
   }
+  // Boat indicator
+  if (Player1.hasBoat) {
+    ctx.fillStyle = Player1.onBoat ? '#5ab0d8' : BOAT_TYPES[Player1.boatTier].color;
+    ctx.font = '9px monospace';
+    ctx.fillText('⛵', 150, 72);
+  }
   // HP + Hunger bars
   drawHUDPlayerBars(16, 27, 160, Player1);
   ctx.fillStyle = '#aaa';
@@ -1417,6 +1766,14 @@ function drawHUD() {
     ctx.beginPath();
     ctx.arc(SCREEN_W - 33, 17, 3, 0, Math.PI * 2);
     ctx.fill();
+  }
+  // Boat indicator
+  if (Player2.hasBoat) {
+    ctx.fillStyle = Player2.onBoat ? '#5ab0d8' : BOAT_TYPES[Player2.boatTier].color;
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('⛵', SCREEN_W - 40, 72);
+    ctx.textAlign = 'left';
   }
   // HP + Hunger bars
   drawHUDPlayerBars(SCREEN_W - 172, 27, 160, Player2);
@@ -1531,13 +1888,16 @@ function gameLoop(timestamp) {
   updateShop();
   updateBaitShop();
   updateNetShop();
+  updateBoatShop();
+  updateDockUI();
   updateGiveGold();
+  updateBoatDock(dt);
 
   // Run achievement checks every frame
   checkAchievements();
 
   // Freeze movement when a shop or full-screen overlay is open
-  const anyOverlay = shopState.open || baitShopState.open || netShopState.open || giveGoldState.open || showAchievements || showLeaderboard;
+  const anyOverlay = shopState.open || baitShopState.open || netShopState.open || boatShopState.open || dockUIState.open || giveGoldState.open || showAchievements || showLeaderboard;
   if (!anyOverlay) {
     Player1.update(dt, Player2);
     Player2.update(dt, Player1);
@@ -1566,9 +1926,12 @@ function gameLoop(timestamp) {
   drawShop();
   drawBaitShop();
   drawNetShop();
+  drawBoatShop();
+  drawDockUI();
   drawAchievements();
   drawLeaderboard();
   drawGiveGold();
+  drawBoatDockHUD();
   drawAchievementNotify();
 
   Input.update();
